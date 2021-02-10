@@ -22,8 +22,8 @@ setup(
     version=__version__,
     description='A catalyst for experiments with lightning.',
     long_description=long_description,
-    url='https://github.com/penguinmenac3/pytorch_mjolnir',
-    download_url='https://github.com/penguinmenac3/pytorch_mjolnir/tarball/' + __version__,
+    url='https://github.com/penguinmenac3/pytorch-mjolnir',
+    download_url='https://github.com/penguinmenac3/pytorch-mjolnir/tarball/' + __version__,
     license='MIT',
     long_description_content_type="text/markdown",
     classifiers=[
