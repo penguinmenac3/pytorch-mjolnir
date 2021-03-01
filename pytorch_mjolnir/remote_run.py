@@ -37,7 +37,13 @@ class _RemoteRunner:
         self.slurm = slurm
         self.user = user
 
-    def run(self, name, version, workspace, repository, remote_results_path, run_template, cmd):
+    def run(self, name, version_suffix, workspace, repository, remote_results_path, run_template, cmd):
+        display_name = name
+        version = _generate_version()
+        if version_suffix is not None:
+            version = f"{version}_{version_suffix}"
+            display_name = f"{name}_{version_suffix}"
+
         print(f"Preparing: {cmd}")
         def _run(cmd):
             print(f"> {cmd}")
@@ -47,7 +53,7 @@ class _RemoteRunner:
         slurmfile = os.path.join(workspace, repository, "run.slurm")
         if self.slurm is not None:
             with open(slurmfile, "w") as f:
-                f.write(self.slurm_template.format(repository=repository, partition=self.slurm, remote_results_path=remote_results_path, name=name, version=version, user=self.user))
+                f.write(self.slurm_template.format(repository=repository, partition=self.slurm, remote_results_path=remote_results_path, name=name, version=version, user=self.user, display_name=display_name))
 
         runfile = os.path.join(workspace, repository, "run.sh")
         with open(runfile, "w") as f:
@@ -64,7 +70,7 @@ class _RemoteRunner:
         if self.slurm is not None:
             _run(f"ssh {self.user}@{self.host} sbatch {remote_results_path}/{name}/{version}/src/{repository}/run.slurm")
         else:
-            _run(f"ssh {self.user}@{self.host} bash {remote_results_path}/{name}/{version}/src/{repository}/run.sh")
+            _run(f"ssh {self.user}@{self.host} screen -dmS '{version}' bash {remote_results_path}/{name}/{version}/src/{repository}/run.sh")
 
 
 def main():
@@ -99,9 +105,7 @@ def main():
         repository = os.getcwd().split("/")[-1]
 
     name = args.name
-    version = _generate_version()
-    if args.version is not None:
-        version = f"{version}_{args.version}"
+    version = args.version
 
     cmd = f"{args.cmd} {' '.join(other_args)}"
 
