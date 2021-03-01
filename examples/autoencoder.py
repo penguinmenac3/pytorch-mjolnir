@@ -16,9 +16,10 @@ from pytorch_mjolnir import Experiment
 
 
 class AutoEncoderExperiment(Experiment):
-    def __init__(self, learning_rate=1e-3, batch_size=32):
+    def __init__(self, learning_rate=1e-3, batch_size=32, max_epochs=10):
         super().__init__()
         self.save_hyperparameters()
+        self.example_input_array = torch.zeros((1, 28 * 28), dtype=torch.float32)
         self.encoder = nn.Sequential(nn.Linear(28 * 28, 128), nn.ReLU(), nn.Linear(128, 3))
         self.decoder = nn.Sequential(nn.Linear(3, 128), nn.ReLU(), nn.Linear(128, 28 * 28))
 
@@ -37,10 +38,9 @@ class AutoEncoderExperiment(Experiment):
         z = self.encoder(feature)
         x_hat = self.decoder(z)
         loss = F.mse_loss(x_hat, feature)
-        if self.training:
-            self.log('loss/train', loss)
-        else:
-            self.log('loss/val', loss)
+        self.log('loss/total', loss)
+        self.log_resources()
+        self.log_fps()
         return loss
 
     def prepare_data(self):
