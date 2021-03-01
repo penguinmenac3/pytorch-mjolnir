@@ -10,11 +10,14 @@ from typing import Any, Tuple
 import pytorch_lightning as pl
 import torch
 import argparse
+import psutil
+import GPUtil
 from torch.utils.data.dataloader import DataLoader
 from time import time
 from datetime import datetime
-from pytorch_lightning.loggers.tensorboard import TensorBoardLogger
 from torch.utils.data.dataset import IterableDataset
+
+from pytorch_mjolnir.tensorboard import TensorBoardLogger
 
 
 def _generate_version() -> str:
@@ -57,8 +60,36 @@ def run(experiment_class):
     parser.add_argument('--resume_checkpoint', type=str, required=False, default=None, help='A specific checkpoint to load. If not provided it tries to load latest if any exists.')
     args, other_args = parser.parse_known_args()
 
-    experiment = experiment_class(**other_args)
+    kwargs = parse_other_args(other_args)
+
+    experiment = experiment_class(**kwargs)
     experiment.run_experiment(name=args.name, version=args.version, output_path=args.output, resume_checkpoint=args.resume_checkpoint, gpus=args.gpus, nodes=args.nodes)
+
+def parse_other_args(other_args):
+    kwargs = {}
+    for arg in other_args:
+        parts = arg.split("=")
+        k = parts[0]
+        if len(parts) == 1:
+            v = True
+        else:
+            v = "=".join(parts[1:])
+            if v.startswith('"') or v.startswith("'"):
+                v = v[1:-2]
+            elif v == "True":
+                v = True
+            elif v == "False":
+                v = False
+            else:
+                try:
+                    v = int(v)
+                except ValueError:
+                    try:
+                        v = float(v)
+                    except ValueError:
+                        pass
+        kwargs[k] = v
+    return kwargs
 
 
 class Experiment(pl.LightningModule):
@@ -96,7 +127,9 @@ class Experiment(pl.LightningModule):
             gpus=gpus,
             num_nodes=nodes,
             logger=TensorBoardLogger(
-                save_dir=output_path, version=version, name=name
+                save_dir=output_path, version=version, name=name,
+                log_graph=hasattr(self, "example_input_array"),
+                default_hp_metric=False
             ),
             resume_from_checkpoint=resume_checkpoint
         )
@@ -109,6 +142,7 @@ class Experiment(pl.LightningModule):
             checkpoints = sorted(os.listdir(checkpoint_folder))
             if len(checkpoints) > 0:
                 resume_checkpoint = os.path.join(checkpoint_folder, checkpoints[-1])
+                print(f"Resume Checkpoint: {resume_checkpoint}")
         return resume_checkpoint
 
     def load_data(self, stage=None) -> Tuple[Any, Any]:
@@ -169,7 +203,7 @@ class Experiment(pl.LightningModule):
         shuffle = True
         if isinstance(self.train_data, IterableDataset):
             shuffle = False
-        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, shuffle=shuffle)
+        return DataLoader(self.train_data, batch_size=self.hparams.batch_size, shuffle=shuffle, num_workers=self.hparams.num_workers)
 
     def val_dataloader(self):
         """
@@ -180,4 +214,43 @@ class Experiment(pl.LightningModule):
         shuffle = True
         if isinstance(self.val_data, IterableDataset):
             shuffle = False
-        return DataLoader(self.val_data, batch_size=self.hparams.batch_size, shuffle=shuffle)
+        return DataLoader(self.val_data, batch_size=self.hparams.batch_size, shuffle=shuffle, num_workers=self.hparams.num_workers)
+
+    def log_resources(self, gpus_separately=False):
+        """
+        Log the cpu, ram and gpu usage.
+        """
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().used / 1000000000
+        self.log("sys/SYS_CPU (%)", cpu)
+        self.log("sys/SYS_RAM (GB)", ram)
+        total_gpu_load = 0
+        total_gpu_mem = 0
+        for gpu in GPUtil.getGPUs():
+            total_gpu_load += gpu.load
+            total_gpu_mem += gpu.memoryUsed
+            if gpus_separately:
+                self.log("sys/GPU_UTIL_{}".format(gpu.id), gpu.load)
+                self.log("sys/GPU_MEM_{}".format(gpu.id), gpu.memoryUtil)
+        self.log("sys/GPU_UTIL (%)", total_gpu_load)
+        self.log("sys/GPU_MEM (GB)", total_gpu_mem / 1000)
+
+    def log_fps(self):
+        """
+        Log the FPS that is achieved.
+        """
+        if hasattr(self, "_iter_time"):
+            elapsed = time() - self._iter_time
+            fps = self.hparams.batch_size / elapsed
+            self.log("sys/FPS", fps)
+        self._iter_time = time()
+
+    def train(self, mode=True):
+        """
+        Set the experiment to training mode and val mode.
+
+        This is done automatically. You will not need this usually.
+        """
+        if self.logger is not None and hasattr(self.logger, "set_mode"):
+            self.logger.set_mode("train" if mode else "val")
+        super().train(mode)
