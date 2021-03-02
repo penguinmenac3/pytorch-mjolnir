@@ -16,7 +16,13 @@ from pytorch_mjolnir import Experiment
 
 
 class AutoEncoderExperiment(Experiment):
-    def __init__(self, learning_rate=1e-3, batch_size=32, max_epochs=10):
+    def __init__(
+        self,
+        learning_rate=1e-3,
+        batch_size=32,
+        max_epochs=10,
+        num_workers=4,
+    ):
         super().__init__()
         self.save_hyperparameters()
         self.example_input_array = torch.zeros((1, 28 * 28), dtype=torch.float32)
