@@ -25,6 +25,7 @@ The `run.template.sh` is a file containing the actual code that should be run.
 It can contain `{remote_results_path}, {repository}, {name}, {version}, {cmd}, {user}` which will be replaced by the arguments provided when calling `mjolnir_remote`.
 """
 import os
+import time
 import argparse
 from pytorch_mjolnir.experiment import _generate_version
 
@@ -37,7 +38,7 @@ class _RemoteRunner:
         self.slurm = slurm
         self.user = user
 
-    def run(self, name, version_suffix, workspace, repository, remote_results_path, run_template, cmd):
+    def run(self, name, version_suffix, workspace, repository, remote_results_path, run_template, cmd, nodes, gpus, cpus):
         display_name = name
         version = _generate_version()
         if version_suffix is not None:
@@ -53,7 +54,8 @@ class _RemoteRunner:
         slurmfile = os.path.join(workspace, repository, "run.slurm")
         if self.slurm is not None:
             with open(slurmfile, "w") as f:
-                f.write(self.slurm_template.format(repository=repository, partition=self.slurm, remote_results_path=remote_results_path, name=name, version=version, user=self.user, display_name=display_name))
+                cpu_mode = "--cpus-per-task" if gpus == 0 else "--cpus-per-gpu"
+                f.write(self.slurm_template.format(repository=repository, partition=self.slurm, remote_results_path=remote_results_path, name=name, version=version, user=self.user, display_name=display_name, nodes=nodes, gpus=gpus, cpus=cpus, cpu_mode=cpu_mode))
 
         runfile = os.path.join(workspace, repository, "run.sh")
         with open(runfile, "w") as f:
@@ -69,6 +71,10 @@ class _RemoteRunner:
 
         if self.slurm is not None:
             _run(f"ssh {self.user}@{self.host} sbatch {remote_results_path}/{name}/{version}/src/{repository}/run.slurm")
+            print("Waiting for output file...")
+            while not os.path.exists(f"{remote_results_path}/{name}/{version}/out.txt"):
+                time.sleep(1)
+            _run(f"tail -f {remote_results_path}/{name}/{version}/out.txt")
         else:
             _run(f"ssh {self.user}@{self.host} screen -dmS '{version}' bash {remote_results_path}/{name}/{version}/src/{repository}/run.sh")
 
@@ -98,6 +104,9 @@ def main():
     parser.add_argument('--partition', type=str, required=False, default=default_partition, help='Select the partition on which to run the code.')
     parser.add_argument('--remote_results_path', type=str, required=(remote_results_path is None), default=remote_results_path, help='The path where on the remote the results live (defaults to $REMOTE_RESULTS_PATH).')
     parser.add_argument('--dry-run', action='store_true', help='This flag will not execute the commands on the cluster but only emulate locally.')
+    parser.add_argument('--nodes', type=int, required=False, default=1, help='Select the number of nodes (Default: 1)')
+    parser.add_argument('--gpus', type=int, required=False, default=1, help='Select the number of gpus (Default: 1)')
+    parser.add_argument('--cpus', type=int, required=False, default=4, help='Select the number of cpus (Default: 4)')
     args, other_args = parser.parse_known_args()
 
     repository = args.repository
@@ -121,7 +130,7 @@ def main():
             slurm_template = f.read()
 
     remote_runner = _RemoteRunner(args.host, slurm_template, user, args.dry_run, slurm=slurm)
-    remote_runner.run(name, version, args.workspace, repository, args.remote_results_path, run_template, cmd)
+    remote_runner.run(name, version, args.workspace, repository, args.remote_results_path, run_template, cmd, args.nodes, args.gpus, args.cpus)
 
 
 if __name__ == "__main__":
