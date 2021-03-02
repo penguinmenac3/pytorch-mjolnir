@@ -12,10 +12,13 @@ import torch
 import argparse
 import psutil
 import GPUtil
+from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
 from time import time
 from datetime import datetime
 from torch.utils.data.dataset import IterableDataset
+from deeptech.data.dataset import Dataset
+from deeptech.core.definitions import SPLIT_TRAIN, SPLIT_VAL
 
 from pytorch_mjolnir.tensorboard import TensorBoardLogger
 
@@ -70,6 +73,8 @@ def parse_other_args(other_args):
     for arg in other_args:
         parts = arg.split("=")
         k = parts[0]
+        if k.startswith("--"):
+            k = k[2:]
         if len(parts) == 1:
             v = True
         else:
@@ -131,7 +136,8 @@ class Experiment(pl.LightningModule):
                 log_graph=hasattr(self, "example_input_array"),
                 default_hp_metric=False
             ),
-            resume_from_checkpoint=resume_checkpoint
+            resume_from_checkpoint=resume_checkpoint,
+            accelerator="ddp" if gpus > 1 else None
         )
         trainer.fit(self)
 
@@ -145,13 +151,49 @@ class Experiment(pl.LightningModule):
                 print(f"Resume Checkpoint: {resume_checkpoint}")
         return resume_checkpoint
 
+    def get_cached_dataset(self, split):
+        if self.hparams.cache_path is not None:
+            cache_path = os.path.join(self.hparams.cache_path, "{}_{}".format(self.hparams.data_version, split))
+            if os.path.exists(cache_path):
+                dataset = Dataset.from_disk(cache_path, split)
+                assert len(dataset) > 0
+                return dataset
+        dataset = self.get_dataset(split)
+        if self.hparams.cache_path is not None:
+            cache_path = os.path.join(self.hparams.cache_path, "{}_{}".format(self.hparams.data_version, split))
+            cache_exists = os.path.exists(cache_path)
+            dataset.init_caching(cache_path)
+            if not cache_exists:
+                self.cache_data(dataset, split)
+        assert len(dataset) > 0
+        return dataset
+
+    def cache_data(self, dataset, name):
+        dataloader = DataLoader(dataset, num_workers=self.hparams.num_workers)
+        for _ in tqdm(dataloader, desc=f"Caching {name}"):
+            pass
+
+    def get_dataset(self, split) -> Tuple[Any, Any]:
+        """
+        **ABSTRACT:** Load the data for a given split.
+
+        :return: A dataset.
+        """
+        raise NotImplementedError("Must be implemented by inheriting classes.")
+
+    def prepare_data(self):
+        # Prepare the data once (no state allowed due to multi-gpu/node setup.)
+        self.get_cached_dataset(SPLIT_TRAIN)
+        self.get_cached_dataset(SPLIT_VAL)
+        assert not getattr(self.hparams, "data_only_prepare", False)
+
     def load_data(self, stage=None) -> Tuple[Any, Any]:
         """
         **ABSTRACT:** Load the data for training and validation.
 
         :return: A tuple of the train and val dataset.
         """
-        raise NotImplementedError("Must be implemented by inheriting classes.")
+        return self.get_cached_dataset(SPLIT_TRAIN), self.get_cached_dataset(SPLIT_VAL)
 
     def training_step(self, batch, batch_idx):
         """
@@ -174,15 +216,6 @@ class Experiment(pl.LightningModule):
         """
         feature, target = batch
         return self.step(feature, target, batch_idx)
-
-    def validation_epoch_end(self, val_step_outputs):
-        """
-        This function is called after all training steps.
-
-        It accumulates the loss into a val_loss which is logged in the end.
-        """
-        avg_loss = torch.tensor([x for x in val_step_outputs]).mean()
-        return {'val_loss': avg_loss}
 
     def setup(self, stage=None):
         """
