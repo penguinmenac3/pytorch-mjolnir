@@ -45,8 +45,5 @@ class SupervisedExperiment(Experiment):
         self.loss.log_resources = self.log_resources
         self.loss.log_fps = self.log_fps
         loss = self.loss(prediction, target)
-        if self.training:
-            self.log('loss/train', loss)
-        else:
-            self.log('loss/val', loss)
+        self.log('loss/total', loss)
         return loss
