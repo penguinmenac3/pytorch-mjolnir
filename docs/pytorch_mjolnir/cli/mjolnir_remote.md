@@ -1,8 +1,8 @@
-[Back to Overview](../README.md)
+[Back to Overview](../../README.md)
 
 
 
-# pytorch_mjolnir._RemoteRunner / mjolnir_remote
+# mjolnir_remote
 
 > A little tool to help with running stuff on a cluster or remotely.
 
@@ -29,7 +29,7 @@ It can contain `{remote_results_path}, {repository}, {name}, {version}, {cmd}, {
 
 
 ---
-### *def* **run**(*self*, name, version, workspace, repository, remote_results_path, **run**_template, cmd)
+### *def* **run**(*self*, name, version_suffix, workspace, repository, remote_results_path, **run**_template, cmd, nodes, gpus, cpus)
 
 *(no documentation found)*
 

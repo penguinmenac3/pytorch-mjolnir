@@ -2,7 +2,7 @@
 
 
 
-# pytorch_mjolnir.Experiment / mjolnir_experiment
+# pytorch_mjolnir.Experiment
 
 > A lightning module that runs an experiment in a managed way.
 
@@ -27,6 +27,11 @@ Then you can call your python file from the command line and use the help to fig
 python my_experiment.py --help
 ```
 
+
+---
+### *def* **parse_other_args**(other_args)
+
+*(no documentation found)*
 
 ---
 ---
@@ -59,6 +64,42 @@ Without defining a version this means no checkpoint can be found as there will n
 
 
 ---
+### *def* **evaluate_experiment**(*self*, name: str, gpus: int, nodes: int, version=None, output_path=os.getcwd(), evaluate_checkpoint=None)
+
+Evaluate the experiment.
+
+* **name**: The name of the family of experiments you are conducting.
+* **gpus**: The number of gpus used for training.
+* **nodes**: The number of nodes used for training.
+* **version**: The name for the specific run of the experiment in the family (defaults to a timestamp).
+* **output_path**: The path where to store the outputs of the experiment (defaults to the current working directory).
+* **evaluate_checkpoint**: The path to the checkpoint that should be loaded (defaults to None).
+
+
+---
+### *def* **get_cached_dataset**(*self*, split)
+
+*(no documentation found)*
+
+---
+### *def* **cache_data**(*self*, dataset, name)
+
+*(no documentation found)*
+
+---
+### *def* **get_dataset**(*self*, split) -> Tuple[Any, Any]
+
+**ABSTRACT:** Load the data for a given split.
+
+* **returns**: A dataset.
+
+
+---
+### *def* **prepare_data**(*self*)
+
+*(no documentation found)*
+
+---
 ### *def* **load_data**(*self*, stage=None) -> Tuple[Any, Any]
 
 **ABSTRACT:** Load the data for training and validation.
@@ -87,14 +128,6 @@ By default this calls the step function.
 
 
 ---
-### *def* **validation_epoch_end**(*self*, val_step_outputs)
-
-This function is called after all training steps.
-
-It accumulates the loss into a val_loss which is logged in the end.
-
-
----
 ### *def* **setup**(*self*, stage=None)
 
 This function is for setting up the training.
@@ -118,5 +151,25 @@ The default implementation wraps self.train_data in a Dataloader.
 Create a validation dataloader.
 
 The default implementation wraps self.val_data in a Dataloader.
+
+
+---
+### *def* **log_resources**(*self*, gpus_separately=False)
+
+Log the cpu, ram and gpu usage.
+
+
+---
+### *def* **log_fps**(*self*)
+
+Log the FPS that is achieved.
+
+
+---
+### *def* **train**(*self*, mode=True)
+
+Set the experiment to training mode and val mode.
+
+This is done automatically. You will not need this usually.
 
 
