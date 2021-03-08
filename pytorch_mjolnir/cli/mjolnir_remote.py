@@ -1,5 +1,5 @@
 """doc
-# pytorch_mjolnir._RemoteRunner / mjolnir_remote
+# mjolnir_remote
 
 > A little tool to help with running stuff on a cluster or remotely.
 
