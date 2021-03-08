@@ -1,3 +1,8 @@
+"""doc
+# pytorch_mjolnir.utils.tensorboard
+
+> A logger for tensorboard which is used by the Experiment.
+"""
 import os
 from torch.utils.tensorboard import SummaryWriter
 
