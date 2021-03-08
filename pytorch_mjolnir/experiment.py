@@ -1,5 +1,5 @@
 """doc
-# pytorch_mjolnir.Experiment / mjolnir_experiment
+# pytorch_mjolnir.Experiment
 
 > A lightning module that runs an experiment in a managed way.
 
@@ -19,8 +19,9 @@ from datetime import datetime
 from torch.utils.data.dataset import IterableDataset
 from deeptech.data.dataset import Dataset
 from deeptech.core.definitions import SPLIT_TRAIN, SPLIT_VAL
+from pytorch_lightning.utilities.cloud_io import load as pl_load
 
-from pytorch_mjolnir.tensorboard import TensorBoardLogger
+from pytorch_mjolnir.utils.tensorboard import TensorBoardLogger
 
 
 def _generate_version() -> str:
@@ -61,12 +62,16 @@ def run(experiment_class):
     parser.add_argument('--gpus', type=int, required=False, default=gpus, help='Number of GPUs that can be used.')
     parser.add_argument('--nodes', type=int, required=False, default=nodes, help='Number of nodes that can be used.')
     parser.add_argument('--resume_checkpoint', type=str, required=False, default=None, help='A specific checkpoint to load. If not provided it tries to load latest if any exists.')
+    parser.add_argument('--evaluate_checkpoint', type=str, required=False, default=None, help='A specific checkpoint to evaluate.')
     args, other_args = parser.parse_known_args()
 
     kwargs = parse_other_args(other_args)
 
     experiment = experiment_class(**kwargs)
-    experiment.run_experiment(name=args.name, version=args.version, output_path=args.output, resume_checkpoint=args.resume_checkpoint, gpus=args.gpus, nodes=args.nodes)
+    if args.evaluate_checkpoint is None:
+        experiment.run_experiment(name=args.name, version=args.version, output_path=args.output, resume_checkpoint=args.resume_checkpoint, gpus=args.gpus, nodes=args.nodes)
+    else:
+        experiment.evaluate_experiment(name=args.name, version=args.version, output_path=args.output, evaluate_checkpoint=args.evaluate_checkpoint, gpus=args.gpus, nodes=args.nodes)
 
 def parse_other_args(other_args):
     kwargs = {}
@@ -126,6 +131,8 @@ class Experiment(pl.LightningModule):
             version = _generate_version()
         if resume_checkpoint is None:
             resume_checkpoint = self._find_checkpoint(name, version, output_path)
+        self.output_path = os.path.join(output_path, name, version)
+        self.testing = False
         trainer = pl.Trainer(
             default_root_dir=output_path,
             max_epochs=getattr(self.hparams, "max_epochs", 1000),
@@ -141,6 +148,45 @@ class Experiment(pl.LightningModule):
         )
         trainer.fit(self)
 
+    def evaluate_experiment(self, name: str, gpus: int, nodes: int, version=None, output_path=os.getcwd(), evaluate_checkpoint=None):
+        """
+        Evaluate the experiment.
+
+        :param name: The name of the family of experiments you are conducting.
+        :param gpus: The number of gpus used for training.
+        :param nodes: The number of nodes used for training.
+        :param version: The name for the specific run of the experiment in the family (defaults to a timestamp).
+        :param output_path: The path where to store the outputs of the experiment (defaults to the current working directory).
+        :param evaluate_checkpoint: The path to the checkpoint that should be loaded (defaults to None).
+        """
+        if version is None:
+            version = _generate_version()
+        if evaluate_checkpoint is None:
+            raise RuntimeError("No checkpoint provided for evaluation, you must provide one.")
+        self.output_path = os.path.join(output_path, name, version)
+        if evaluate_checkpoint == "last":
+            checkpoint_path = self._find_checkpoint(name, version, output_path)
+        else:
+            checkpoint_path = os.path.join(self.output_path, evaluate_checkpoint)
+        if checkpoint_path is None or not os.path.exists(checkpoint_path):
+            raise RuntimeError(f"Checkpoint does not exist: {str(checkpoint_path)}")
+        self.testing = True
+        trainer = pl.Trainer(
+            default_root_dir=output_path,
+            max_epochs=getattr(self.hparams, "max_epochs", 1000),
+            gpus=gpus,
+            num_nodes=nodes,
+            logger=TensorBoardLogger(
+                save_dir=output_path, version=version, name=name,
+                log_graph=hasattr(self, "example_input_array"),
+                default_hp_metric=False
+            ),
+            accelerator="ddp" if gpus > 1 else None
+        )
+        ckpt = pl_load(checkpoint_path, map_location=lambda storage, loc: storage)
+        self.load_state_dict(ckpt['state_dict'])
+        trainer.test(self)
+
     def _find_checkpoint(self, name, version, output_path):
         resume_checkpoint = None
         checkpoint_folder = os.path.join(output_path, name, version, "checkpoints")
@@ -148,28 +194,29 @@ class Experiment(pl.LightningModule):
             checkpoints = sorted(os.listdir(checkpoint_folder))
             if len(checkpoints) > 0:
                 resume_checkpoint = os.path.join(checkpoint_folder, checkpoints[-1])
-                print(f"Resume Checkpoint: {resume_checkpoint}")
+                print(f"Using Checkpoint: {resume_checkpoint}")
         return resume_checkpoint
 
     def get_cached_dataset(self, split):
-        if self.hparams.cache_path is not None:
-            cache_path = os.path.join(self.hparams.cache_path, "{}_{}".format(self.hparams.data_version, split))
-            if os.path.exists(cache_path):
-                dataset = Dataset.from_disk(cache_path, split)
+        cache_path = getattr(self.hparams, "cache_path", None)
+        if cache_path is not None:
+            full_cache_path = cache_path + "_" + split
+            if os.path.exists(full_cache_path):
+                dataset = Dataset.from_disk(full_cache_path, split)
                 assert len(dataset) > 0
                 return dataset
         dataset = self.get_dataset(split)
-        if self.hparams.cache_path is not None:
-            cache_path = os.path.join(self.hparams.cache_path, "{}_{}".format(self.hparams.data_version, split))
-            cache_exists = os.path.exists(cache_path)
-            dataset.init_caching(cache_path)
+        if cache_path is not None:
+            full_cache_path = cache_path + "_" + split
+            cache_exists = os.path.exists(full_cache_path)
+            dataset.init_caching(full_cache_path)
             if not cache_exists:
                 self.cache_data(dataset, split)
         assert len(dataset) > 0
         return dataset
 
     def cache_data(self, dataset, name):
-        dataloader = DataLoader(dataset, num_workers=self.hparams.num_workers)
+        dataloader = DataLoader(dataset, num_workers=getattr(self.hparams, "num_workers", None))
         for _ in tqdm(dataloader, desc=f"Caching {name}"):
             pass
 
@@ -183,9 +230,10 @@ class Experiment(pl.LightningModule):
 
     def prepare_data(self):
         # Prepare the data once (no state allowed due to multi-gpu/node setup.)
-        self.get_cached_dataset(SPLIT_TRAIN)
-        self.get_cached_dataset(SPLIT_VAL)
-        assert not getattr(self.hparams, "data_only_prepare", False)
+        if not self.testing:
+            self.get_cached_dataset(SPLIT_TRAIN)
+            self.get_cached_dataset(SPLIT_VAL)
+            assert not getattr(self.hparams, "data_only_prepare", False)
 
     def load_data(self, stage=None) -> Tuple[Any, Any]:
         """
@@ -193,7 +241,10 @@ class Experiment(pl.LightningModule):
 
         :return: A tuple of the train and val dataset.
         """
-        return self.get_cached_dataset(SPLIT_TRAIN), self.get_cached_dataset(SPLIT_VAL)
+        if not self.testing:
+            return self.get_cached_dataset(SPLIT_TRAIN), self.get_cached_dataset(SPLIT_VAL)
+        else:
+            return None, None
 
     def training_step(self, batch, batch_idx):
         """
@@ -285,5 +336,8 @@ class Experiment(pl.LightningModule):
         This is done automatically. You will not need this usually.
         """
         if self.logger is not None and hasattr(self.logger, "set_mode"):
-            self.logger.set_mode("train" if mode else "val")
+            if self.testing:
+                self.logger.set_mode("test")
+            else:
+                self.logger.set_mode("train" if mode else "val")
         super().train(mode)
