@@ -40,7 +40,7 @@ setup(
     author_email='mail@michaelfuerst.de',
     entry_points={
         'console_scripts': [
-            'mjolnir_remote = pytorch_mjolnir.remote_run:main',
+            'mjolnir_remote = pytorch_mjolnir.cli.mjolnir_remote:main',
         ]
     },
     extras_require={
